@@ -1,8 +1,8 @@
-name: Compile C to ARM Assembly (Debug Version)
+name: Compile to ARM Assembly
 
 on:
   push:
-    branches: [ "main" ] # 请确保你的分支名是 main，如果是 master 请修改这里
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
@@ -13,68 +13,72 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🔍 Step 1: List all files in repo
+      - name: List repo files
         run: |
-          echo "--- 正在列举仓库中发现的所有文件 ---"
+          echo "--- Current File List ---"
           find . -maxdepth 3 -not -path '*/.*'
-          echo "------------------------------------"
 
-      - name: 🚀 Step 2: Compile to ARM Assembly
+      - name: Compile C files
         run: |
-          # 确保输出目录是空的且存在
+          # 1. 初始化输出目录
           rm -rf output_asm
           mkdir -p output_asm
           
-          # 获取 SDK 路径
+          # 2. 获取 macOS SDK 路径
           SDK_PATH=$(xcrun --show-sdk-path)
           
-          # 自动扫描所有头文件目录
-          echo "正在收集头文件路径..."
-          INCLUDE_FLAGS=$(find . -name "*.h" -not -path '*/.*' -exec dirname {} + | sort -u | sed 's|^|-I |' | tr '\n' ' ')
-          echo "使用的头文件参数: $INCLUDE_FLAGS"
+          # 3. 核心：全局搜寻所有 .h 文件所在的目录作为头文件路径
+          echo "Scanning for include directories..."
+          INCLUDE_DIRS=$(find . -name "*.h" -not -path '*/.*' -exec dirname {} + | sort -u)
+          INCLUDE_FLAGS=""
+          for dir in $INCLUDE_DIRS; do
+            INCLUDE_FLAGS="$INCLUDE_FLAGS -I$dir"
+          done
+          echo "Using Include Flags: $INCLUDE_FLAGS"
 
-          # 开始遍历所有的 .c 文件
-          # 我们使用 -print0 处理可能存在的空格
+          # 4. 遍历所有 .c 文件进行编译
           find . -name "*.c" -not -path '*/.*' | while read -r c_file; do
-            echo "发现 C 文件: $c_file"
+            echo "--------------------------------"
+            echo "Compiling file: $c_file"
             
-            # 获取文件夹路径和文件名
-            dir_path=$(dirname "$c_file")
-            file_name=$(basename "$c_file" .c)
+            # 提取路径信息
+            dir_name=$(dirname "$c_file")
+            base_name=$(basename "$c_file" .c)
             
-            # 这里的 rel_dir 是为了保持目录结构
             # 去掉路径前面的 ./
-            rel_dir=$(echo "$dir_path" | sed 's|^\./||')
+            clean_dir=$(echo "$dir_name" | sed 's|^\./||')
             
-            # 创建对应的输出文件夹
-            target_out_dir="output_asm/$rel_dir"
-            mkdir -p "$target_out_dir"
+            # 创建输出路径
+            if [ "$clean_dir" = "." ]; then
+              out_path="output_asm"
+            else
+              out_path="output_asm/$clean_dir"
+              mkdir -p "$out_path"
+            fi
             
-            # 执行编译
-            # 目标：保持文件名一致，后缀改为 .s
-            echo "正在编译 [$c_file] -> [$target_out_dir/${file_name}.s]"
+            target_file="$out_path/${base_name}.s"
             
-            clang -S -target arm64-apple-macos \
+            # 编译为 ARM 汇编
+            # -S: 生成汇编
+            # -target: 指定 Mac ARM64 架构
+            if clang -S -target arm64-apple-macos \
                   -isysroot "$SDK_PATH" \
                   $INCLUDE_FLAGS \
                   "$c_file" \
-                  -o "$target_out_dir/${file_name}.s"
-            
-            if [ $? -eq 0 ]; then
-              echo "✅ 成功生成: ${file_name}.s"
+                  -o "$target_file"; then
+              echo "Success: $target_file"
             else
-              echo "❌ 失败: $c_file"
+              echo "Error: Failed to compile $c_file"
             fi
           done
 
-      - name: 📦 Step 3: Verify Output
+      - name: Check output files
         run: |
-          echo "--- 编译完成，最终生成的文件列表如下 ---"
+          echo "--- Final Generated Files ---"
           find output_asm -name "*.s"
-          echo "---------------------------------------"
 
-      - name: 📥 Step 4: Upload Artifacts
+      - name: Upload result
         uses: actions/upload-artifact@v4
         with:
-          name: arm-assembly-result
+          name: arm-assembly-files
           path: output_asm/
