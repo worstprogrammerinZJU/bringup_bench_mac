@@ -1,0 +1,52 @@
+name: Compile C to ARM Assembly (macOS)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Compile to ARM Assembly
+        run: |
+          # 创建根输出目录
+          mkdir -p output_asm
+          
+          # 递归寻找 bringup_bench 文件夹下所有的 .c 文件
+          # 这样即使你有嵌套文件夹也能处理
+          find bringup_bench -name "*.c" | while read -r c_file; do
+            # 1. 获取该文件所在的目录路径 (例如 bringup_bench/test1)
+            dir_path=$(dirname "$c_file")
+            
+            # 2. 获取不带后缀的文件名 (例如 test_logic)
+            file_name_no_ext=$(basename "$c_file" .c)
+            
+            # 3. 在 output_asm 中创建相同的子目录结构，防止重名覆盖
+            mkdir -p "output_asm/$dir_path"
+            
+            echo "Compiling $c_file..."
+            
+            # 4. 执行编译
+            # -S: 生成汇编
+            # -target arm64-apple-macos: 目标为 Mac ARM 架构
+            # -I "$dir_path": 包含当前文件夹下的所有 .h 文件
+            # -o: 输出路径，保持文件名一致，后缀改为 .s
+            clang -S -target arm64-apple-macos \
+                  -I "$dir_path" \
+                  "$c_file" \
+                  -o "output_asm/$dir_path/${file_name_no_ext}.s"
+            
+          done
+
+      - name: Upload Assembly Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm-assembly-files
+          # 上传整个 output_asm 文件夹，它会保留原来的目录层级
+          path: output_asm/
