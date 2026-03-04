@@ -15,38 +15,53 @@ jobs:
 
       - name: Compile to ARM Assembly
         run: |
-          # 创建根输出目录
+          # 1. 创建存放结果的临时目录
           mkdir -p output_asm
           
-          # 递归寻找 bringup_bench 文件夹下所有的 .c 文件
-          # 这样即使你有嵌套文件夹也能处理
-          find bringup_bench -name "*.c" | while read -r c_file; do
-            # 1. 获取该文件所在的目录路径 (例如 bringup_bench/test1)
+          # 2. 遍历当前目录下所有的 .c 文件
+          # -not -path '*/.*' 用于排除 .git 和 .github 等隐藏目录
+          find . -name "*.c" -not -path '*/.*' | while read -r c_file; do
+            
+            # 获取文件夹路径 (例如 ./subfolder1)
             dir_path=$(dirname "$c_file")
             
-            # 2. 获取不带后缀的文件名 (例如 test_logic)
+            # 获取文件名 (例如 test.c -> test)
             file_name_no_ext=$(basename "$c_file" .c)
             
-            # 3. 在 output_asm 中创建相同的子目录结构，防止重名覆盖
-            mkdir -p "output_asm/$dir_path"
+            # 获取去掉 ./ 的纯路径名，用于在 output 中创建同样的结构
+            # 如果是在根目录，rel_dir 会变成 .
+            rel_dir=$(echo "$dir_path" | sed 's|^\./||')
             
-            echo "Compiling $c_file..."
+            echo "------------------------------------------"
+            echo "Processing: $c_file"
             
-            # 4. 执行编译
-            # -S: 生成汇编
-            # -target arm64-apple-macos: 目标为 Mac ARM 架构
-            # -I "$dir_path": 包含当前文件夹下的所有 .h 文件
-            # -o: 输出路径，保持文件名一致，后缀改为 .s
+            # 创建输出子目录 (如果 rel_dir 是 . 就直接输出到根)
+            if [ "$rel_dir" != "." ]; then
+                mkdir -p "output_asm/$rel_dir"
+                output_path="output_asm/$rel_dir/${file_name_no_ext}.s"
+            else
+                output_path="output_asm/${file_name_no_ext}.s"
+            fi
+
+            # 3. 执行编译
+            # -I "$dir_path": 自动链接当前 .c 所在文件夹下的所有 .h 文件
+            echo "Command: clang -S -target arm64-apple-macos -I $dir_path $c_file -o $output_path"
+            
             clang -S -target arm64-apple-macos \
                   -I "$dir_path" \
                   "$c_file" \
-                  -o "output_asm/$dir_path/${file_name_no_ext}.s"
+                  -o "$output_path"
             
+            if [ $? -eq 0 ]; then
+              echo "✅ Success: $output_path"
+            else
+              echo "❌ Failed: $c_file"
+            fi
           done
 
       - name: Upload Assembly Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: arm-assembly-files
-          # 上传整个 output_asm 文件夹，它会保留原来的目录层级
           path: output_asm/
+          if-no-files-found: error
