@@ -1,4 +1,4 @@
-name: Compile C to ARM Assembly (via GCC)
+name: Compile C to ARM Assembly (macOS)
 
 on:
   push:
@@ -13,37 +13,55 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install GNU GCC
-        run: |
-          brew install gcc
-          # 获取安装后的 gcc 版本号（例如 gcc-14）
-          echo "GCC_BIN=$(ls /opt/homebrew/bin/gcc-[0-9]* | head -n 1)" >> $GITHUB_ENV
-
       - name: Compile to ARM Assembly
         run: |
+          # 1. 获取 macOS SDK 路径（防止找不到系统头文件）
+          SDK_PATH=$(xcrun --show-sdk-path)
+          
+          # 2. 【核心步骤】自动寻找所有包含 .h 文件的目录
+          # 这会遍历整个仓库，找到所有 .h 所在的文件夹，并转换成 -I path1 -I path2 的格式
+          echo "Scanning for header directories..."
+          INCLUDE_FLAGS=$(find . -name "*.h" -not -path '*/.*' -exec dirname {} + | sort -u | sed 's|^|-I |' | tr '\n' ' ')
+          echo "Include Flags: $INCLUDE_FLAGS"
+
+          # 3. 创建输出目录
           mkdir -p output_asm
           
-          # 查找所有的 .c 文件
+          # 4. 遍历所有 .c 文件进行编译
           find . -name "*.c" -not -path '*/.*' | while read -r c_file; do
             dir_path=$(dirname "$c_file")
             file_name=$(basename "$c_file" .c)
             rel_dir=$(echo "$dir_path" | sed 's|^\./||')
             
-            # 创建输出目录
-            target_dir="output_asm/$rel_dir"
+            # 准备输出路径
+            if [ "$rel_dir" = "." ]; then
+                target_dir="output_asm"
+            else
+                target_dir="output_asm/$rel_dir"
+            fi
             mkdir -p "$target_dir"
             
-            echo "Processing $c_file..."
-            
-            # 使用安装的 GNU GCC
-            # -S: 生成汇编
-            # -fomit-frame-pointer: 产生更简洁的汇编 (可选)
-            # -I: 头文件路径
-            $GCC_BIN -S -I "$dir_path" "$c_file" -o "$target_dir/${file_name}.s"
+            output_file="$target_dir/${file_name}.s"
+            echo "------------------------------------------"
+            echo "Compiling: $c_file"
+
+            # 5. 执行编译
+            # 使用了全局找到的 $INCLUDE_FLAGS
+            if clang -S -target arm64-apple-macos \
+                  -isysroot "$SDK_PATH" \
+                  $INCLUDE_FLAGS \
+                  "$c_file" \
+                  -o "$output_file"; then
+              echo "✅ Success: $output_file"
+            else
+              echo "❌ Error: Failed to compile $c_file"
+              # 这里可以决定是否中断：如果想看到所有错误，就不加 exit 1
+            fi
           done
 
-      - name: Upload
+      - name: Upload Assembly Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: arm-assembly-gcc
+          name: arm-assembly-files
           path: output_asm/
+          if-no-files-found: error
